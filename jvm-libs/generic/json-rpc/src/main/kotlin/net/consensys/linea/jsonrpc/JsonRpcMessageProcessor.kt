@@ -22,8 +22,9 @@ import io.vertx.core.json.JsonArray
 import io.vertx.core.json.JsonObject
 import io.vertx.core.json.jackson.DatabindCodec
 import io.vertx.ext.auth.User
+import net.consensys.linea.metrics.MetricsFacade
+import net.consensys.linea.metrics.Tag
 import net.consensys.linea.metrics.micrometer.DynamicTagTimerCapture
-import net.consensys.linea.metrics.micrometer.SimpleTimerCapture
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 
@@ -50,12 +51,14 @@ private data class RequestContext(
  */
 class JsonRpcMessageProcessor(
   private val requestsHandler: JsonRpcRequestHandler,
+  private val metricsFacade: MetricsFacade,
   private val meterRegistry: MeterRegistry,
   private val requestParser: JsonRpcRequestParser = Companion::parseRequest
 ) : JsonRpcMessageHandler {
   init {
     DatabindCodec.mapper().registerKotlinModule()
   }
+
   private val log: Logger = LogManager.getLogger(this.javaClass)
   private val counterBuilder = Counter.builder("jsonrpc.counter")
   override fun invoke(user: User?, messageJsonStr: String): Future<String> =
@@ -140,12 +143,10 @@ class JsonRpcMessageProcessor(
           if (responses.size == 1) {
             responses.first()
           } else {
-            SimpleTimerCapture<String>(
-              meterRegistry,
-              "jsonrpc.serialization.response.bulk"
-            )
-              .setDescription("Time of bulk json response serialization")
-              .captureTime { responses.joinToString(",", "[", "]") }
+            metricsFacade.createSimpleTimer<String>(
+              name = "jsonrpc.serialization.response.bulk",
+              description = "Time of bulk json response serialization"
+            ).captureTime { responses.joinToString(",", "[", "]") }
           }
 
         timerSample.stop(wholeRequestTimer.register(meterRegistry))
@@ -171,10 +172,13 @@ class JsonRpcMessageProcessor(
   }
 
   private fun encodeAndMeasureResponse(requestContext: RequestContext): String {
-    return SimpleTimerCapture<String>(meterRegistry, "jsonrpc.serialization.response")
-      .setDescription("Time of json response serialization")
-      .setTag("method", requestContext.method)
-      .captureTime { Json.encode(requestContext.result.merge()) }
+    val timerCapture = metricsFacade.createSimpleTimer<String>(
+      name = "jsonrpc.serialization.response",
+      description = "Time of json response serialization",
+      tags = listOf(Tag("method", requestContext.method))
+    )
+
+    return timerCapture.captureTime { Json.encode(requestContext.result.merge()) }
   }
 
   private fun handleRequest(
@@ -182,13 +186,13 @@ class JsonRpcMessageProcessor(
     jsonRpcRequest: JsonRpcRequest,
     requestJson: JsonObject
   ): Future<Result<JsonRpcSuccessResponse, JsonRpcErrorResponse>> {
-    return SimpleTimerCapture<Result<JsonRpcSuccessResponse, JsonRpcErrorResponse>>(
-      meterRegistry,
-      "jsonrpc.processing.logic"
+    val timerCapture = metricsFacade.createSimpleTimer<Future<Result<JsonRpcSuccessResponse, JsonRpcErrorResponse>>>(
+      name = "jsonrpc.processing.logic",
+      description = "Processing of a particular JRPC method's logic without SerDes",
+      tags = listOf(Tag("method", jsonRpcRequest.method))
     )
-      .setTag("method", jsonRpcRequest.method)
-      .setDescription("Processing of a particular JRPC method's logic without SerDes")
-      .captureTime(callRequestHandlerAndCatchError(user, jsonRpcRequest, requestJson))
+    return timerCapture
+      .captureTime { callRequestHandlerAndCatchError(user, jsonRpcRequest, requestJson) }
       .onComplete { result: AsyncResult<Result<JsonRpcSuccessResponse, JsonRpcErrorResponse>> ->
         val success = (result.succeeded() && result.result() is Ok)
         counterBuilder.tag("success", success.toString())
