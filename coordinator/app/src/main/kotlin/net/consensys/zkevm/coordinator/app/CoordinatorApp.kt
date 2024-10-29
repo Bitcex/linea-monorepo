@@ -57,9 +57,10 @@ class CoordinatorApp(private val configs: CoordinatorConfig) {
     Vertx.vertx(vertxConfig)
   }
   private val meterRegistry: MeterRegistry = BackendRegistries.getDefaultNow()
+  private val micrometerMetricsFacade = MicrometerMetricsFacade(meterRegistry, "linea")
   private val httpJsonRpcClientFactory = VertxHttpJsonRpcClientFactory(
     vertx,
-    meterRegistry,
+    micrometerMetricsFacade,
     requestResponseLogLevel = Level.TRACE,
     failuresLogLevel = Level.WARN
   )
@@ -120,8 +121,6 @@ class CoordinatorApp(private val configs: CoordinatorConfig) {
       persistenceRetryer = persistenceRetryer
     )
   )
-
-  private val micrometerMetricsFacade = MicrometerMetricsFacade(meterRegistry, "linea")
 
   private val l1FeeHistoriesRepository =
     FeeHistoriesRepositoryImpl(
