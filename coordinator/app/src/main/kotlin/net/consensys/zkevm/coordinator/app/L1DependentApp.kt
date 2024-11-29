@@ -521,7 +521,7 @@ class L1DependentApp(
   private val alreadySubmittedBlobsFilter =
     L1ShnarfBasedAlreadySubmittedBlobsFilter(
       lineaRollup = lineaSmartContractClientForDataSubmission,
-      acceptedBlobEndBlockNumberConsumer = { highestAcceptedBlobTracker }
+      acceptedBlobEndBlockNumberConsumer = { highestAcceptedBlobTracker(it) }
     )
 
   private val latestBlobSubmittedBlockNumberTracker = LatestBlobSubmittedBlockNumberTracker(0UL)
