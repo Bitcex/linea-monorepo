@@ -54,16 +54,15 @@ class JsonRpcMessageProcessor(
   }
 
   private val log: Logger = LogManager.getLogger(this.javaClass)
-  override fun invoke(user: User?, messageJsonStr: String): Future<String> {
-    return measureRequestProcessing(user, messageJsonStr)
-  }
+  override fun invoke(user: User?, messageJsonStr: String): Future<String> =
+    handleMessage(user, messageJsonStr)
 
-  private fun handleMessage(user: User?, requestJsonStr: String): Future<Pair<String, String>> {
+  private fun handleMessage(user: User?, requestJsonStr: String): Future<String> {
     val json: Any =
       when (val result = decodeMessage(requestJsonStr)) {
         is Ok -> result.value
         is Err -> {
-          return Future.succeededFuture(Pair("MESSAGE_DECODE_ERROR", Json.encode(result.error)))
+          return Future.succeededFuture(Json.encode(result.error))
         }
       }
     log.trace(json)
@@ -82,11 +81,24 @@ class JsonRpcMessageProcessor(
     // all or nothing: if any of the requests has a parsing error, return before execution
     parsingResults.forEach {
       when (it) {
-        is Err -> return Future.succeededFuture(Pair(methodTag, Json.encode(it.error)))
+        is Err -> return Future.succeededFuture(Json.encode(it.error))
         is Ok -> Unit
       }
     }
 
+    return measureRequestProcessing(
+      user = user,
+      requestJsonStr = requestJsonStr,
+      parsingResults = parsingResults,
+      methodTag = methodTag
+    )
+  }
+
+  private fun handleMessageRequest(
+    user: User?,
+    parsingResults: List<Result<Pair<JsonRpcRequest, JsonObject>, JsonRpcErrorResponse>>,
+    methodTag: String
+  ): Future<Triple<String, String, Boolean>> {
     var allSuccessful = true
     val executionFutures: List<Future<RequestContext>> =
       parsingResults.map { result ->
@@ -134,14 +146,18 @@ class JsonRpcMessageProcessor(
               description = "Time of bulk json response serialization"
             ).captureTime { responses.joinToString(",", "[", "]") }
           }
-        logResponse(allSuccessful, finalResponseJsonStr, requestJsonStr)
-        Future.succeededFuture(Pair(methodTag, finalResponseJsonStr))
+        Future.succeededFuture(Triple(methodTag, finalResponseJsonStr, allSuccessful))
       }
   }
 
-  private fun measureRequestProcessing(user: User?, requestJsonStr: String): Future<String> {
+  private fun measureRequestProcessing(
+    user: User?,
+    requestJsonStr: String,
+    parsingResults: List<Result<Pair<JsonRpcRequest, JsonObject>, JsonRpcErrorResponse>>,
+    methodTag: String
+  ): Future<String> {
     return Future.fromCompletionStage(
-      metricsFacade.createDynamicTagTimer<Pair<String, String>>(
+      metricsFacade.createDynamicTagTimer<Triple<String, String, Boolean>>(
         name = "jsonrpc.processing.whole",
         description = "Processing of JSON-RPC message: Deserialization + Business Logic + Serialization",
         tagKey = "method",
@@ -149,8 +165,15 @@ class JsonRpcMessageProcessor(
       ) {
         it.first
       }
-        .captureTime(handleMessage(user, requestJsonStr).toCompletionStage().toCompletableFuture())
+        .captureTime(
+          handleMessageRequest(
+            user = user,
+            parsingResults = parsingResults,
+            methodTag = methodTag
+          ).toCompletionStage().toCompletableFuture()
+        )
         .thenApply {
+          logResponse(it.third, it.second, requestJsonStr)
           it.second
         }
     )
@@ -176,7 +199,6 @@ class JsonRpcMessageProcessor(
       description = "Time of json response serialization",
       tags = listOf(Tag("method", requestContext.method))
     )
-
     return timerCapture.captureTime { Json.encode(requestContext.result.merge()) }
   }
 
