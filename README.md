@@ -11,7 +11,7 @@
 </a>
 <a href="https://codecov.io/gh/Consensys/linea-monorepo">
   <img src="https://codecov.io/gh/Consensys/linea-monorepo/graph/badge.svg?token=2TM55P0CGJ" alt="Codecov" height="20">
-</a>
+</a> 
 
 This is the principal Linea repository. It mainly includes the smart contracts covering Linea's core functions, the prover in charge of generating ZK proofs, the coordinator responsible for multiple orchestrations, and the Postman to execute bridge messages. 
 
